@@ -1,23 +1,19 @@
 import { NextResponse } from "next/server";
+import { put } from "@vercel/blob";
 import { getCurrentUser } from "@/lib/auth";
 import { query } from "@/lib/db";
-import fs from "fs";
-import path from "path";
 import crypto from "crypto";
 
-// Max 5 MB
+// Max 5 MB (also under Vercel serverless body limit ~4.5 MB for safer margin use 4 MB client-side if needed)
 const MAX_FILE_SIZE = 5 * 1024 * 1024;
 
-// Magic byte verification for secure image validation
 function detectImageExtension(buffer: Buffer): string | null {
   if (buffer.length < 12) return null;
 
-  // JPEG: FF D8 FF
   if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
     return ".jpg";
   }
 
-  // PNG: 89 50 4E 47 0D 0A 1A 0A
   if (
     buffer[0] === 0x89 &&
     buffer[1] === 0x50 &&
@@ -31,7 +27,6 @@ function detectImageExtension(buffer: Buffer): string | null {
     return ".png";
   }
 
-  // WebP: RIFF .... WEBP
   if (
     buffer[0] === 0x52 &&
     buffer[1] === 0x49 &&
@@ -45,7 +40,6 @@ function detectImageExtension(buffer: Buffer): string | null {
     return ".webp";
   }
 
-  // GIF: GIF87a or GIF89a
   if (
     buffer[0] === 0x47 &&
     buffer[1] === 0x49 &&
@@ -62,12 +56,21 @@ function detectImageExtension(buffer: Buffer): string | null {
 
 export async function POST(req: Request) {
   try {
-    // 1. Authentication check
     const user = await getCurrentUser();
     if (!user) {
       return NextResponse.json(
         { message: "Akses ditolak. Sesi login diperlukan untuk mengunggah berkas." },
         { status: 401 }
+      );
+    }
+
+    if (!process.env.BLOB_READ_WRITE_TOKEN && !process.env.BLOB_STORE_ID) {
+      return NextResponse.json(
+        {
+          message:
+            "Penyimpanan Blob belum dikonfigurasi. Hubungkan Vercel Blob dan set BLOB_READ_WRITE_TOKEN (atau BLOB_STORE_ID + OIDC) di environment.",
+        },
+        { status: 503 }
       );
     }
 
@@ -81,7 +84,6 @@ export async function POST(req: Request) {
       );
     }
 
-    // 2. File size validation
     if (file.size > MAX_FILE_SIZE) {
       return NextResponse.json(
         { message: "Ukuran berkas melebihi batas maksimum 5 MB." },
@@ -92,7 +94,6 @@ export async function POST(req: Request) {
     const bytes = await file.arrayBuffer();
     const buffer = Buffer.from(bytes);
 
-    // 3. Magic byte signature verification (Prevents disguised executable scripts)
     const detectedExtension = detectImageExtension(buffer);
     if (!detectedExtension) {
       return NextResponse.json(
@@ -104,32 +105,23 @@ export async function POST(req: Request) {
       );
     }
 
-    // 4. Cryptographically randomized filename (Prevents path traversal & file overwrite)
     const randomHex = crypto.randomBytes(12).toString("hex");
     const safeFilename = `bpbd_${Date.now()}_${randomHex}${detectedExtension}`;
+    const pathname = `uploads/${safeFilename}`;
 
-    // 5. Secure target path verification
-    const uploadsDir = path.join(process.cwd(), "public", "uploads");
-    if (!fs.existsSync(uploadsDir)) {
-      fs.mkdirSync(uploadsDir, { recursive: true });
-    }
+    const blob = await put(pathname, buffer, {
+      access: "public",
+      contentType:
+        detectedExtension === ".jpg"
+          ? "image/jpeg"
+          : detectedExtension === ".png"
+            ? "image/png"
+            : detectedExtension === ".webp"
+              ? "image/webp"
+              : "image/gif",
+      addRandomSuffix: false,
+    });
 
-    const targetFilePath = path.join(uploadsDir, safeFilename);
-
-    // Enforce path containment
-    if (!targetFilePath.startsWith(uploadsDir)) {
-      return NextResponse.json(
-        { message: "Deteksi anomali pada jalur penyimpanan berkas." },
-        { status: 400 }
-      );
-    }
-
-    // 6. Write file safely to disk
-    await fs.promises.writeFile(targetFilePath, buffer);
-
-    const publicUrl = `/uploads/${safeFilename}`;
-
-    // 7. Audit logging
     await query(
       "INSERT INTO audit_logs (user_name, action, details) VALUES ($1, $2, $3)",
       [
@@ -141,16 +133,18 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       success: true,
-      url: publicUrl,
+      url: blob.url,
       filename: safeFilename,
       size: file.size,
       mimeType: file.type,
       message: "Berkas gambar berhasil diunggah dengan aman.",
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Upload API Error:", error);
+    const message =
+      error instanceof Error ? error.message : "Kesalahan tidak diketahui";
     return NextResponse.json(
-      { message: "Terjadi kesalahan server saat memproses unggahan: " + error.message },
+      { message: "Terjadi kesalahan server saat memproses unggahan: " + message },
       { status: 500 }
     );
   }

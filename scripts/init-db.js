@@ -1,12 +1,36 @@
 const { Client } = require("pg");
 const bcrypt = require("bcryptjs");
+const crypto = require("crypto");
 
-const connectionString = "postgresql://sakata_user:sakata_pass@127.0.0.1:64543/bpbd_bitung";
+const connectionString = process.env.DATABASE_URL;
+if (!connectionString) {
+  console.error(
+    "❌ DATABASE_URL is required. Example:\n  DATABASE_URL='postgresql://user:pass@host:5432/bpbd_bitung' node scripts/init-db.js"
+  );
+  process.exit(1);
+}
+
+function resolveInitialAdminPassword() {
+  if (process.env.ADMIN_INITIAL_PASSWORD) {
+    return { password: process.env.ADMIN_INITIAL_PASSWORD, generated: false };
+  }
+  return {
+    password: crypto.randomBytes(9).toString("base64url"),
+    generated: true,
+  };
+}
 
 async function initializeDatabase() {
-  const client = new Client({ connectionString });
+  const clientConfig = { connectionString };
+  if (process.env.DB_SSL === "true") {
+    clientConfig.ssl = {
+      rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED !== "false",
+    };
+  }
+
+  const client = new Client(clientConfig);
   await client.connect();
-  console.log("Connected to PostgreSQL on port 64543.");
+  console.log("Connected to PostgreSQL.");
 
   // Create Users Table
   await client.query(`
@@ -173,13 +197,20 @@ async function initializeDatabase() {
   // Check if admin user exists, else create default
   const userCheck = await client.query("SELECT * FROM users WHERE username = 'admin'");
   if (userCheck.rows.length === 0) {
+    const { password: adminPassword, generated } = resolveInitialAdminPassword();
     const salt = await bcrypt.genSalt(10);
-    const hash = await bcrypt.hash("admin123", salt);
+    const hash = await bcrypt.hash(adminPassword, salt);
     await client.query(
       "INSERT INTO users (username, password_hash, name, role) VALUES ($1, $2, $3, $4)",
       ["admin", hash, "Administrator BPBD", "admin"]
     );
-    console.log("✅ Created default admin user: admin / admin123");
+    console.log("✅ Created default admin user: admin");
+    if (generated) {
+      console.log(`🔑 Generated ADMIN password (save now): ${adminPassword}`);
+      console.log("   Tip: set ADMIN_INITIAL_PASSWORD next time to choose your own.");
+    } else {
+      console.log("🔑 Used ADMIN_INITIAL_PASSWORD from environment.");
+    }
   }
 
   // Seed Site Settings

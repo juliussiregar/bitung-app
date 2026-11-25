@@ -1,21 +1,40 @@
-import { Pool } from "pg";
+import { Pool, type PoolConfig } from "pg";
 
-const connectionString =
-  process.env.DATABASE_URL ||
-  "postgresql://sakata_user:sakata_pass@127.0.0.1:64543/bpbd_bitung";
+let pool: Pool | null = null;
 
-const pool = new Pool({
-  connectionString,
-  max: 10,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 5000,
-});
+function getPool() {
+  if (pool) return pool;
 
-export async function query(text: string, params?: any[]) {
-  const start = Date.now();
-  const res = await pool.query(text, params);
-  const duration = Date.now() - start;
-  return res;
+  const connectionString = process.env.DATABASE_URL;
+  if (!connectionString) {
+    throw new Error(
+      "DATABASE_URL is not set. Add it to your environment (e.g. Vercel project env or .env.local)."
+    );
+  }
+
+  const poolConfig: PoolConfig = {
+    connectionString,
+    // Keep pool small for serverless (Vercel) to avoid exhausting DB connections.
+    max: Number(process.env.DB_POOL_MAX || 3),
+    idleTimeoutMillis: 10_000,
+    connectionTimeoutMillis: 5_000,
+  };
+
+  // Arteloka / self-hosted DB may run without SSL. Opt in with DB_SSL=true if needed later.
+  if (process.env.DB_SSL === "true") {
+    poolConfig.ssl = {
+      rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED !== "false",
+    };
+  }
+
+  pool = new Pool(poolConfig);
+  return pool;
 }
 
-export default pool;
+export async function query(text: string, params?: unknown[]) {
+  return getPool().query(text, params);
+}
+
+export default {
+  query: (text: string, params?: unknown[]) => getPool().query(text, params),
+};

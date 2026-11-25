@@ -1,9 +1,15 @@
 import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
 
-const SECRET_KEY = new TextEncoder().encode(
-  process.env.JWT_SECRET || "bpbd_bitung_super_secret_jwt_key_2026_sakata"
-);
+function getSecretKey() {
+  const jwtSecret = process.env.JWT_SECRET;
+  if (!jwtSecret) {
+    throw new Error(
+      "JWT_SECRET is not set. Add a strong random secret to your environment before starting the app."
+    );
+  }
+  return new TextEncoder().encode(jwtSecret);
+}
 
 export async function createSessionToken(payload: {
   userId: number;
@@ -15,19 +21,19 @@ export async function createSessionToken(payload: {
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime("24h")
-    .sign(SECRET_KEY);
+    .sign(getSecretKey());
 }
 
 export async function verifySessionToken(token: string) {
   try {
-    const { payload } = await jwtVerify(token, SECRET_KEY);
+    const { payload } = await jwtVerify(token, getSecretKey());
     return payload as {
       userId: number;
       username: string;
       name: string;
       role: string;
     };
-  } catch (err) {
+  } catch {
     return null;
   }
 }

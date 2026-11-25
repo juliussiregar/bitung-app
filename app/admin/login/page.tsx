@@ -7,8 +7,8 @@ import { Shield, Lock, User, ArrowRight, AlertCircle, Eye, EyeOff } from "lucide
 
 export default function AdminLoginPage() {
   const router = useRouter();
-  const [username, setUsername] = useState("admin");
-  const [password, setPassword] = useState("admin123");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -130,13 +130,6 @@ export default function AdminLoginPage() {
             </button>
           </form>
 
-          {/* Quick Default Credential Notice */}
-          <div className="mt-6 pt-5 border-t border-slate-100 text-center">
-            <span className="text-[11px] text-slate-400">
-              Default Login: <strong className="text-slate-700">admin</strong> /{" "}
-              <strong className="text-slate-700">admin123</strong>
-            </span>
-          </div>
         </div>
 
         <div className="text-center mt-6 text-slate-400 text-xs">
